@@ -1,3 +1,15 @@
+from openai import OpenAI
+import os
+from typing import Optional
+
+
+# エラーメッセージ定数
+ERROR_MESSAGES = {
+    "API_KEY_INVALID": "APIキーが不正または無効です。APIサーバーの設定をご確認ください。",
+    "GENERAL_ERROR": "エラーが発生しました: {error}",
+}
+
+
 def get_system_prompt() -> str:
     """
     ChatGPTに与えるシステムプロンプト（性格・振る舞いの指示）を返す。
@@ -33,3 +45,35 @@ def build_chat_messages(user_input: str) -> list[dict]:
         {"role": "system", "content": get_system_prompt()},
         {"role": "user", "content": format_user_message(user_input)},
     ]
+
+
+def get_openai_api_key() -> Optional[str]:
+    """OpenAI APIキーを取得し、有効性をチェック"""
+    api_key = os.getenv("OPENAI_API_KEY")
+    return api_key if api_key and api_key.strip() else None
+
+
+async def process_chat_message(user_message: str) -> str:
+    """
+    チャットメッセージを処理してOpenAI APIから応答を取得
+    APIキーの検証からレスポンス生成まで全て処理
+    """
+    # APIキーの検証
+    api_key = get_openai_api_key()
+    if not api_key:
+        return ERROR_MESSAGES["API_KEY_INVALID"]
+
+    try:
+        # OpenAI API呼び出し
+        client = OpenAI(api_key=api_key)
+        messages = build_chat_messages(user_message)
+
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        return ERROR_MESSAGES["GENERAL_ERROR"].format(error=str(e))
