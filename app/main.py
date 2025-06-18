@@ -18,6 +18,10 @@ from .chat.service import ChatService
 from .pleasanter.client import PleasanterClient
 from typing import Dict, Any
 
+# === グローバルなデータストレージ ===
+# プリザンターから取得したデータを一時保存
+_current_pleasanter_data = None
+
 # FastAPIアプリケーションの作成
 app = FastAPI()
 
@@ -177,6 +181,10 @@ async def receive_site_id(
         # 成功時の処理
         record_count = result.get("record_count", 0)
         print(f"[INFO] {result['message']} (件数: {record_count})")
+
+        # 取得したデータをグローバル変数に保存
+        global _current_pleasanter_data
+        _current_pleasanter_data = result["data"]
 
         return create_pleasanter_response(
             success=True,

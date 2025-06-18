@@ -14,7 +14,11 @@ def get_chat_service() -> ChatService:
     Returns:
         ChatService: 設定済みのチャットサービス
     """
-    return ChatService()
+    # グローバル変数からプリザンターデータを取得
+    from . import main
+
+    pleasanter_data = main._current_pleasanter_data
+    return ChatService(pleasanter_data)
 
 
 def get_pleasanter_client() -> PleasanterClient:
