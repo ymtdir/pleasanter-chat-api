@@ -13,8 +13,9 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from .chat_utils import process_chat_message
-from .pleasanter_utils import PleasanterAPI
+from .dependencies import get_chat_service, get_pleasanter_client
+from .chat.service import ChatService
+from .pleasanter.client import PleasanterClient
 from typing import Dict, Any
 
 # FastAPIアプリケーションの作成
@@ -32,7 +33,7 @@ app.add_middleware(
 # === 依存性プロバイダー ===
 
 
-def get_pleasanter_client() -> PleasanterAPI:
+def get_pleasanter_client() -> PleasanterClient:
     """プリザンターAPIクライアントを取得
 
     依存性注入用のプロバイダー関数。
@@ -41,7 +42,7 @@ def get_pleasanter_client() -> PleasanterAPI:
     Returns:
         PleasanterAPI: 設定済みのプリザンターAPIクライアント
     """
-    return PleasanterAPI()
+    return PleasanterClient()
 
 
 # === リクエスト/レスポンス モデル ===
@@ -105,7 +106,9 @@ def create_pleasanter_response(
 
 
 @app.post("/api/chat")
-async def receive_chat(request: Request) -> JSONResponse:
+async def receive_chat(
+    request: Request, chat_service: ChatService = Depends(get_chat_service)
+) -> JSONResponse:
     """チャットメッセージ処理エンドポイント
 
     クライアントからのメッセージを受信し、ChatGPTで応答を生成して返します。
@@ -121,18 +124,17 @@ async def receive_chat(request: Request) -> JSONResponse:
         Request: {"message": "プリザンターについて教えて"}
         Response: {"reply": "プリザンターは..."}
     """
-    # リクエストデータの取得
     data = await request.json()
     user_message = data.get("message", "")
 
-    # チャット処理の実行（chat_utilsに委譲）
-    chat_reply = await process_chat_message(user_message)
+    # DI されたサービスを使用
+    chat_reply = await chat_service.process_message(user_message)
     return create_chat_response(chat_reply)
 
 
 @app.post("/api/site-id/{site_id}")
 async def receive_site_id(
-    site_id: int, pleasanter_client: PleasanterAPI = Depends(get_pleasanter_client)
+    site_id: int, pleasanter_client: PleasanterClient = Depends(get_pleasanter_client)
 ) -> JSONResponse:
     """プリザンターサイトID受信エンドポイント
 
