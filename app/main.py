@@ -168,7 +168,7 @@ async def receive_site_id(
             "error": "HTTPエラー: 401"
         }
     """
-    print(f"📨 SiteId {site_id} を受信")
+    print(f"[INFO] SiteId {site_id} を受信")
 
     # プリザンターからレコードを取得
     result = await pleasanter_client.get_records(site_id)
@@ -176,7 +176,7 @@ async def receive_site_id(
     if result["success"]:
         # 成功時の処理
         record_count = result.get("record_count", 0)
-        print(f"✅ {result['message']} (件数: {record_count})")
+        print(f"[INFO] {result['message']} (件数: {record_count})")
 
         return create_pleasanter_response(
             success=True,
@@ -186,7 +186,7 @@ async def receive_site_id(
         )
     else:
         # 失敗時の処理
-        print(f"❌ {result['message']}: {result['error']}")
+        print(f"[ERROR] {result['message']}: {result['error']}")
 
         return create_pleasanter_response(
             success=False,
