@@ -46,18 +46,13 @@ async def receive_chat(request: Request):
     return create_chat_response(chat_reply)
 
 
-@app.post("/api/items/{site_id}")
-async def receive_records(site_id: int, request: Request):
+@app.post("/api/site-id/{site_id}")
+async def receive_site_id(site_id: int):
     """
-    各 SiteId ごとに一覧データ（レコード群）を受信
+    各 SiteId ごとに通知だけを受信
     """
-    data = await request.json()
-    records = data.get("records", [])
-
-    print(f"SiteId {site_id} のレコードを受信。件数: {len(records)}")
-    return JSONResponse(
-        content={"status": "received", "site_id": site_id, "count": len(records)}
-    )
+    print(f"SiteId {site_id} を受信")
+    return JSONResponse(content={"status": "received", "site_id": site_id})
 
 
 # 開発用実行コマンド
