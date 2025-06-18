@@ -1,7 +1,7 @@
 from openai import OpenAI
 import os
 from typing import Optional
-
+from .config import settings
 
 # エラーメッセージ定数
 ERROR_MESSAGES = {
@@ -48,9 +48,8 @@ def build_chat_messages(user_input: str) -> list[dict]:
 
 
 def get_openai_api_key() -> Optional[str]:
-    """OpenAI APIキーを取得し、有効性をチェック"""
-    api_key = os.getenv("OPENAI_API_KEY")
-    return api_key if api_key and api_key.strip() else None
+    """OpenAI APIキーを取得"""
+    return settings.OPENAI_API_KEY
 
 
 async def process_chat_message(user_message: str) -> str:
