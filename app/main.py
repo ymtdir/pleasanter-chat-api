@@ -17,6 +17,9 @@ from .dependencies import get_chat_service, get_pleasanter_client
 from .chat.service import ChatService
 from .pleasanter.client import PleasanterClient
 from typing import Dict, Any
+import json
+import os
+from pathlib import Path
 
 # === グローバルなデータストレージ ===
 # プリザンターから取得したデータを一時保存
@@ -33,6 +36,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# === JSONファイル保存機能 ===
+
+
+def get_data_dir() -> Path:
+    """データ保存用ディレクトリを取得
+
+    Returns:
+        Path: データ保存用ディレクトリのパス
+    """
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
+    return data_dir
+
+
+def save_site_data_to_json(site_id: int, data: Dict[str, Any]) -> str:
+    """サイトデータをJSONファイルに保存
+
+    Args:
+        site_id (int): サイトID
+        data (Dict[str, Any]): 保存するデータ
+
+    Returns:
+        str: 保存されたファイルのパス
+    """
+    data_dir = get_data_dir()
+    file_path = data_dir / f"site_{site_id}.json"
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return str(file_path)
+
 
 # === 依存性プロバイダー ===
 
@@ -144,11 +180,13 @@ async def receive_site_id(
 
     プリザンター側からサイトIDの通知を受信し、
     そのサイトのレコード情報をプリザンターAPIから取得します。
+    取得したデータはJSONファイルとして保存されます。
 
     処理フロー:
     1. サイトIDを受信
     2. プリザンターAPIにレコード取得リクエストを送信
-    3. 取得結果をログ出力およびレスポンスで返却
+    3. 取得結果をJSONファイルに保存
+    4. 取得結果をログ出力およびレスポンスで返却
 
     Args:
         site_id (int): プリザンターのサイトID
@@ -161,7 +199,8 @@ async def receive_site_id(
             "status": "success",
             "site_id": 123,
             "message": "サイトID 123 のレコードを取得しました",
-            "record_count": 25
+            "record_count": 25,
+            "file_path": "data/site_123.json"
         }
 
     Error Response:
@@ -182,7 +221,20 @@ async def receive_site_id(
         record_count = result.get("record_count", 0)
         print(f"[INFO] {result['message']} (件数: {record_count})")
 
-        # 取得したデータをグローバル変数に保存
+        # 取得したデータをJSONファイルに保存
+        try:
+            file_path = save_site_data_to_json(site_id, result["data"])
+            print(f"[INFO] データをJSONファイルに保存しました: {file_path}")
+        except Exception as e:
+            print(f"[ERROR] JSONファイル保存に失敗: {str(e)}")
+            return create_pleasanter_response(
+                success=False,
+                site_id=site_id,
+                message="データの保存に失敗しました",
+                error=str(e),
+            )
+
+        # 取得したデータをグローバル変数に保存（従来の仕組みも維持）
         global _current_pleasanter_data
         _current_pleasanter_data = result["data"]
 
@@ -191,6 +243,7 @@ async def receive_site_id(
             site_id=site_id,
             message=result["message"],
             record_count=record_count,
+            file_path=file_path,
         )
     else:
         # 失敗時の処理

@@ -2,174 +2,256 @@
 チャット処理サービス
 
 OpenAI APIを使用したチャット機能を提供します。
-プロンプト生成、メッセージ加工、API呼び出しを統合的に処理します。
+Assistant APIとファイルアップロード機能を使用してJSONデータを分析します。
 """
 
 from openai import OpenAI
 from typing import Optional, List, Dict, Any
 from ..config import settings
+import json
+import os
+from pathlib import Path
+import time
 
 
 class ChatService:
     """チャット処理サービス
 
-    OpenAI APIを使用したチャット機能を提供するサービスクラス。
-    システムプロンプト生成、ユーザーメッセージ加工、API呼び出しを統合的に処理します。
+    OpenAI Assistant APIを使用したチャット機能を提供するサービスクラス。
+    JSONファイルのアップロード、Assistant作成、スレッド管理を統合的に処理します。
     """
 
     def __init__(self, pleasanter_data: Optional[Dict[str, Any]] = None):
         """チャットサービスを初期化
 
         Args:
-            pleasanter_data (Optional[Dict[str, Any]]): プリザンターから取得したレコードデータ
+            pleasanter_data (Optional[Dict[str, Any]]): プリザンターから取得したレコードデータ（互換性のため残している）
         """
         self.pleasanter_data = pleasanter_data
-
-        # テスト用：取得したデータを確認
-        # print("=== ChatService コンストラクタ ===")
-        # if self.pleasanter_data:
-        #     print("[INFO] プリザンターデータを取得しました:")
-        #     print(f"データ型: {type(self.pleasanter_data)}")
-        #     print(f"データ内容: {self.pleasanter_data}")
-        # else:
-        #     print("[INFO] プリザンターデータは存在しません")
-        # print("=" * 35)
-
+        self.client = None
+        self.assistant = None
         self.error_messages = {
             "API_KEY_INVALID": "OpenAI APIキーが不正または無効です。サーバーの設定をご確認ください。",
+            "NO_DATA": "プリザンターデータが見つかりません。サイトIDを受信してからお試しください。",
             "GENERAL_ERROR": "エラーが発生しました: {error}",
         }
 
-    def get_system_prompt(self) -> str:
-        """システムプロンプトを取得
-
-        ChatGPTに与えるシステムプロンプト（性格・振る舞いの指示）を返します。
-        プリザンター専門のアシスタントとしての役割を定義します。
-        プリザンターデータがある場合は、そのデータを含めて分析指示を行います。
-
-        Returns:
-            str: システムプロンプト文字列
-        """
-        base_prompt = (
-            "あなたは業務アプリケーションの一覧テーブルに対して、"
-            "その構造や内容、傾向、特徴などを分析・説明するアシスタントです。\n"
-            "ユーザーに対して簡潔かつ親切に情報を提供してください。\n"
-            "表以外の話題には答えず、無関係な質問には制限的に返答してください。\n"
-        )
-
-        if self.pleasanter_data:
-            data_prompt = f"""
-            \n=== プリザンターテーブルデータ ===
-            以下のデータは、プリザンターから取得した実際のテーブルレコードです。
-            このデータを詳細に分析し、ユーザーの質問に対してデータに基づく具体的な回答を提供してください。
-
-            {self.pleasanter_data}
-
-            === 分析指示 ===
-            - 上記のデータ構造を理解し、各フィールドの内容を把握してください
-            - ユーザーの質問に対して、このデータから読み取れる事実のみを回答してください
-            - データにない情報については推測せず、「データに含まれていません」と答えてください
-            - 件数、傾向、特徴などは実際のデータを集計・分析して回答してください
-            """
-            return base_prompt + data_prompt
-        else:
-            # データが無い場合の専用メッセージ
-            no_data_prompt = """
-            あなたはプリザンターのテーブルデータ分析アシスタントです。
-            現在、分析に必要なプリザンターのテーブルデータが取得できていません。
-
-            ユーザーから何を質問されても、以下の内容で回答してください：
-
-            「申し訳ございませんが、プリザンターのテーブルデータの取得に失敗しています。
-            データを分析するために、以下の手順を実行してください：
-
-            1. プリザンターのページを読み込み直してください
-            2. 分析したいテーブル・一覧画面を表示してください  
-            3. データが正常に取得されてから、再度ご質問ください
-
-            現在はデータが利用できないため、具体的なテーブル分析はできません。」
-
-            この内容以外は回答しないでください。
-            """
-            return no_data_prompt
-
-    def format_user_message(self, original: str) -> str:
-        """ユーザーメッセージを加工
-
-        ユーザーからの入力にルールや制約を加えて加工します。
-        回答の品質と形式を統一するための指示を追加します。
-
-        Args:
-            original (str): 元のユーザーメッセージ
-
-        Returns:
-            str: 加工されたメッセージ
-        """
-        instructions = """
-        以下の指示に従って質問に答えてください：
-        - 与えられたレコードはある業務一覧テーブルを示しています。
-        - 各レコードには複数のフィールドがあり、そこから傾向や特徴を見つけてください。
-        - 質問には、簡潔かつ具体的に回答してください。
-        - 回答はテーブルの内容に基づく範囲に限定してください。
-        """
-        return f"{original.strip()}\n\n{instructions.strip()}"
-
-    def build_chat_messages(self, user_input: str) -> List[Dict[str, str]]:
-        """OpenAI API用のメッセージ配列を構築
-
-        システムプロンプトとユーザーメッセージを組み合わせて、
-        OpenAI APIに送信するためのメッセージ配列を生成します。
-
-        Args:
-            user_input (str): ユーザーからの入力メッセージ
-
-        Returns:
-            List[Dict[str, str]]: OpenAI API用のメッセージ配列
-        """
-        return [
-            {"role": "system", "content": self.get_system_prompt()},
-            {"role": "user", "content": self.format_user_message(user_input)},
-        ]
-
     def _get_api_key(self) -> Optional[str]:
         """OpenAI APIキーを取得
-
-        設定からOpenAI APIキーを取得します。
 
         Returns:
             Optional[str]: APIキー（未設定の場合はNone）
         """
         return settings.OPENAI_API_KEY
 
+    def _get_latest_site_file(self) -> Optional[str]:
+        """最新のサイトJSONファイルを取得
+
+        Returns:
+            Optional[str]: JSONファイルのパス（見つからない場合はNone）
+        """
+        data_dir = Path("data")
+        if not data_dir.exists():
+            return None
+
+        json_files = list(data_dir.glob("site_*.json"))
+        if not json_files:
+            return None
+
+        # 最新のファイルを取得（更新時刻ベース）
+        latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
+        return str(latest_file)
+
+    async def _initialize_client(self) -> bool:
+        """OpenAIクライアントを初期化
+
+        Returns:
+            bool: 初期化成功フラグ
+        """
+        api_key = self._get_api_key()
+        if not api_key:
+            return False
+
+        self.client = OpenAI(api_key=api_key)
+        return True
+
+    async def _create_or_get_assistant(self) -> Optional[str]:
+        """アシスタントを作成または取得
+
+        Returns:
+            Optional[str]: アシスタントID（失敗時はNone）
+        """
+        try:
+            # 既存のアシスタントを検索
+            assistants = self.client.beta.assistants.list()
+
+            # プリザンター専用アシスタントを探す
+            for assistant in assistants.data:
+                if assistant.name == "プリザンターデータ分析アシスタント":
+                    self.assistant = assistant
+                    return assistant.id
+
+            # 見つからない場合は新規作成
+            self.assistant = self.client.beta.assistants.create(
+                name="プリザンターデータ分析アシスタント",
+                instructions="""あなたは業務アプリケーションの一覧テーブルに対して、
+                その構造や内容、傾向、特徴などを分析・説明するアシスタントです。
+                ユーザーに対して簡潔かつ親切に情報を提供してください。
+                表以外の話題には答えず、無関係な質問には制限的に返答してください。
+
+                アップロードされたJSONファイルはプリザンターから取得した実際のテーブルレコードです。
+                このデータを詳細に分析し、ユーザーの質問に対してデータに基づく具体的な回答を提供してください。
+
+                - データ構造を理解し、各フィールドの内容を把握してください
+                - ユーザーの質問に対して、このデータから読み取れる事実のみを回答してください
+                - データにない情報については推測せず、「データに含まれていません」と答えてください
+                - 件数、傾向、特徴などは実際のデータを集計・分析して回答してください""",
+                model="gpt-4-1106-preview",
+                tools=[{"type": "code_interpreter"}],
+            )
+
+            return self.assistant.id
+
+        except Exception as e:
+            print(f"[ERROR] アシスタント作成に失敗: {str(e)}")
+            return None
+
+    async def _upload_file(self, file_path: str) -> Optional[str]:
+        """JSONファイルをOpenAIにアップロード
+
+        Args:
+            file_path (str): アップロードするファイルのパス
+
+        Returns:
+            Optional[str]: ファイルID（失敗時はNone）
+        """
+        try:
+            with open(file_path, "rb") as file:
+                uploaded_file = self.client.files.create(
+                    file=file, purpose="assistants"
+                )
+                return uploaded_file.id
+        except Exception as e:
+            print(f"[ERROR] ファイルアップロードに失敗: {str(e)}")
+            return None
+
+    async def _wait_for_completion(
+        self, thread_id: str, run_id: str, timeout: int = 30
+    ) -> bool:
+        """実行完了を待機
+
+        Args:
+            thread_id (str): スレッドID
+            run_id (str): 実行ID
+            timeout (int): タイムアウト秒数
+
+        Returns:
+            bool: 完了フラグ
+        """
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            run = self.client.beta.threads.runs.retrieve(
+                thread_id=thread_id, run_id=run_id
+            )
+
+            if run.status == "completed":
+                return True
+            elif run.status in ["failed", "cancelled", "expired"]:
+                print(f"[ERROR] 実行が失敗しました: {run.status}")
+                return False
+
+            time.sleep(1)
+
+        print(f"[ERROR] 実行がタイムアウトしました")
+        return False
+
     async def process_message(self, user_message: str) -> str:
         """チャットメッセージを処理
 
-        ユーザーからのメッセージを受け取り、OpenAI APIで処理して応答を生成します。
-        プリザンターデータがある場合は、それをコンテキストとして活用します。
-        APIキーの検証、プロンプト構築、API呼び出し、エラーハンドリングを統合的に処理します。
+        ユーザーからのメッセージを受け取り、OpenAI Assistant APIで処理して応答を生成します。
+        JSONファイルをアップロードしてアシスタントに分析させます。
 
         Args:
             user_message (str): ユーザーからのメッセージ
 
         Returns:
-            str: ChatGPTからの応答またはエラーメッセージ
+            str: アシスタントからの応答またはエラーメッセージ
         """
-        # APIキーの検証
-        api_key = self._get_api_key()
-        if not api_key:
+        # クライアント初期化
+        if not await self._initialize_client():
             return self.error_messages["API_KEY_INVALID"]
 
-        try:
-            # OpenAI API呼び出し
-            client = OpenAI(api_key=api_key)
-            messages = self.build_chat_messages(user_message)
+        # 最新のJSONファイルを取得
+        json_file_path = self._get_latest_site_file()
+        if not json_file_path:
+            return self.error_messages["NO_DATA"]
 
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
+        try:
+            # アシスタントの作成または取得
+            assistant_id = await self._create_or_get_assistant()
+            if not assistant_id:
+                return self.error_messages["GENERAL_ERROR"].format(
+                    error="アシスタントの作成に失敗"
+                )
+
+            # ファイルアップロード
+            file_id = await self._upload_file(json_file_path)
+            if not file_id:
+                return self.error_messages["GENERAL_ERROR"].format(
+                    error="ファイルアップロードに失敗"
+                )
+
+            # スレッド作成
+            thread = self.client.beta.threads.create()
+
+            # メッセージ追加（ファイル付き）
+            self.client.beta.threads.messages.create(
+                thread_id=thread.id,
+                role="user",
+                content=user_message,
+                attachments=[
+                    {"file_id": file_id, "tools": [{"type": "code_interpreter"}]}
+                ],
             )
 
-            return response.choices[0].message.content
+            # 実行開始
+            run = self.client.beta.threads.runs.create(
+                thread_id=thread.id, assistant_id=assistant_id
+            )
+
+            # 実行完了を待機
+            if not await self._wait_for_completion(thread.id, run.id):
+                return self.error_messages["GENERAL_ERROR"].format(
+                    error="実行タイムアウト"
+                )
+
+            # 応答取得
+            messages = self.client.beta.threads.messages.list(thread_id=thread.id)
+
+            # 最新のアシスタントメッセージを取得
+            for message in messages.data:
+                if message.role == "assistant":
+                    # テキストコンテンツを抽出
+                    for content in message.content:
+                        if content.type == "text":
+                            return content.text.value
+
+            return self.error_messages["GENERAL_ERROR"].format(error="応答の取得に失敗")
 
         except Exception as e:
             return self.error_messages["GENERAL_ERROR"].format(error=str(e))
+
+    # === 後方互換性のためのメソッド（未使用） ===
+
+    def get_system_prompt(self) -> str:
+        """システムプロンプトを取得（後方互換性のため残している）"""
+        return ""
+
+    def format_user_message(self, original: str) -> str:
+        """ユーザーメッセージを加工（後方互換性のため残している）"""
+        return original
+
+    def build_chat_messages(self, user_input: str) -> List[Dict[str, str]]:
+        """OpenAI API用のメッセージ配列を構築（後方互換性のため残している）"""
+        return []

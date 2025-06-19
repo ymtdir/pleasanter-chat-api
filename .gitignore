@@ -192,3 +192,7 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Pleasanter Chat API - プリザンターデータファイル
+# プリザンターから取得したJSONデータファイルをリポジトリから除外
+data/*.json
