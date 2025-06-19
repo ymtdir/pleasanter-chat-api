@@ -2,7 +2,7 @@
 チャット処理サービス
 
 OpenAI APIを使用したチャット機能を提供します。
-Assistant APIとファイルアップロード機能を使用してJSONデータを分析します。
+内容に応じてGPT-3.5 TurboとGPT-4を切り替え、必要な場合のみファイルをアップロードします。
 """
 
 from openai import OpenAI
@@ -12,13 +12,14 @@ import json
 import os
 from pathlib import Path
 import time
+import re
 
 
 class ChatService:
     """チャット処理サービス
 
-    OpenAI Assistant APIを使用したチャット機能を提供するサービスクラス。
-    JSONファイルのアップロード、Assistant作成、スレッド管理を統合的に処理します。
+    OpenAI APIを使用したチャット機能を提供するサービスクラス。
+    メッセージの内容に応じてモデルとファイル送信を最適化します。
     """
 
     def __init__(self, pleasanter_data: Optional[Dict[str, Any]] = None):
@@ -35,6 +36,43 @@ class ChatService:
             "NO_DATA": "プリザンターデータが見つかりません。サイトIDを受信してからお試しください。",
             "GENERAL_ERROR": "エラーが発生しました: {error}",
         }
+
+        # データ分析が必要なキーワード
+        self.data_analysis_keywords = [
+            "データ",
+            "レコード",
+            "件数",
+            "分析",
+            "統計",
+            "集計",
+            "傾向",
+            "グラフ",
+            "表",
+            "一覧",
+            "詳細",
+            "内容",
+            "構造",
+            "フィールド",
+            "カラム",
+            "項目",
+            "値",
+            "取得",
+            "検索",
+            "抽出",
+            "フィルタ",
+            "合計",
+            "平均",
+            "最大",
+            "最小",
+            "比較",
+            "ランキング",
+            "状況",
+            "状態",
+            "進捗",
+            "履歴",
+            "変化",
+            "差異",
+        ]
 
     def _get_api_key(self) -> Optional[str]:
         """OpenAI APIキーを取得
@@ -62,6 +100,85 @@ class ChatService:
         latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
         return str(latest_file)
 
+    def _needs_data_analysis(self, message: str) -> bool:
+        """メッセージがデータ分析を必要とするかを判定
+
+        Args:
+            message (str): ユーザーメッセージ
+
+        Returns:
+            bool: データ分析が必要な場合True
+        """
+        message_lower = message.lower()
+
+        # データ分析キーワードが含まれているかチェック
+        for keyword in self.data_analysis_keywords:
+            if keyword in message_lower:
+                return True
+
+        # 質問パターンをチェック
+        question_patterns = [
+            r"どのくらい",
+            r"何件",
+            r"いくつ",
+            r"どんな",
+            r"どの",
+            r"どれ",
+            r"なぜ",
+            r"いつ",
+            r"誰",
+            r"どこ",
+            r"\?",
+            r"？",
+        ]
+
+        for pattern in question_patterns:
+            if re.search(pattern, message_lower):
+                return True
+
+        return False
+
+    def _needs_gpt4(self, message: str) -> bool:
+        """メッセージがGPT-4を必要とするかを判定
+
+        Args:
+            message (str): ユーザーメッセージ
+
+        Returns:
+            bool: GPT-4が必要な場合True
+        """
+        # データ分析が必要な場合はGPT-4を使用
+        if self._needs_data_analysis(message):
+            return True
+
+        # 複雑な処理を要求するキーワード
+        complex_keywords = [
+            "複雑",
+            "詳細",
+            "分析",
+            "解析",
+            "推論",
+            "考察",
+            "検討",
+            "比較",
+            "評価",
+            "判断",
+            "計算",
+            "処理",
+            "変換",
+        ]
+
+        message_lower = message.lower()
+        for keyword in complex_keywords:
+            if keyword in message_lower:
+                return True
+
+        # メッセージが長い場合（100文字以上）はGPT-4を使用
+        if len(message) > 100:
+            return True
+
+        return False
+
     async def _initialize_client(self) -> bool:
         """OpenAIクライアントを初期化
 
@@ -74,6 +191,41 @@ class ChatService:
 
         self.client = OpenAI(api_key=api_key)
         return True
+
+    async def _simple_chat(self, user_message: str) -> str:
+        """シンプルなチャット（GPT-3.5 Turbo使用）
+
+        Args:
+            user_message (str): ユーザーメッセージ
+
+        Returns:
+            str: 応答メッセージ
+        """
+        print("[PROCESSING] GPT-3.5 Turbo でチャット処理を開始...")
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """あなたはプリザンター（Pleasanter）に関する質問に答えるアシスタントです。
+                        回答は必ず200文字以内で簡潔に答えてください。
+                        プリザンターの使い方、機能、設定などについて要点のみを分かりやすく回答してください。
+                        データの詳細分析が必要な場合は、より詳細な分析を依頼するよう案内してください。""",
+                    },
+                    {"role": "user", "content": user_message},
+                ],
+                max_tokens=300,
+                temperature=0.7,
+            )
+
+            result = response.choices[0].message.content
+            print("[SUCCESS] GPT-3.5 Turbo での処理が完了しました")
+            return result
+
+        except Exception as e:
+            print(f"[ERROR] GPT-3.5 Turbo でのチャット処理に失敗: {str(e)}")
+            return self.error_messages["GENERAL_ERROR"].format(error=str(e))
 
     async def _create_or_get_assistant(self) -> Optional[str]:
         """アシスタントを作成または取得
@@ -94,18 +246,16 @@ class ChatService:
             # 見つからない場合は新規作成
             self.assistant = self.client.beta.assistants.create(
                 name="プリザンターデータ分析アシスタント",
-                instructions="""あなたは業務アプリケーションの一覧テーブルに対して、
-                その構造や内容、傾向、特徴などを分析・説明するアシスタントです。
-                ユーザーに対して簡潔かつ親切に情報を提供してください。
-                表以外の話題には答えず、無関係な質問には制限的に返答してください。
+                instructions="""あなたは、日本語で応答するプロのデータ分析アシスタントです。
+                アップロードされたJSON（プリザンターのレコード）を分析し、その内容や傾向を説明してください。
 
-                アップロードされたJSONファイルはプリザンターから取得した実際のテーブルレコードです。
-                このデータを詳細に分析し、ユーザーの質問に対してデータに基づく具体的な回答を提供してください。
+                **最重要ルール:**
+                1. **日本語で回答:** 必ず日本語で応答してください。
+                2. **200文字以内:** 回答は常に200文字以内で簡潔にまとめてください。
+                3. **具体的・直感的:** IDや専門的な項目名ではなく、「タスク名」や「担当者名」といった実際のデータを使って説明してください。（例：「田中さんのタスク」）
+                4. **積極的な分析:** 「分析できません」と答えず、データから読み取れる傾向や特徴を積極的に見つけ出し、有用な情報を提供してください。
 
-                - データ構造を理解し、各フィールドの内容を把握してください
-                - ユーザーの質問に対して、このデータから読み取れる事実のみを回答してください
-                - データにない情報については推測せず、「データに含まれていません」と答えてください
-                - 件数、傾向、特徴などは実際のデータを集計・分析して回答してください""",
+                ユーザーの質問に対し、データに基づいた洞察を分かりやすく伝えてください。""",
                 model="gpt-4-1106-preview",
                 tools=[{"type": "code_interpreter"}],
             )
@@ -136,7 +286,7 @@ class ChatService:
             return None
 
     async def _wait_for_completion(
-        self, thread_id: str, run_id: str, timeout: int = 30
+        self, thread_id: str, run_id: str, timeout: int = 60
     ) -> bool:
         """実行完了を待機
 
@@ -166,21 +316,16 @@ class ChatService:
         print(f"[ERROR] 実行がタイムアウトしました")
         return False
 
-    async def process_message(self, user_message: str) -> str:
-        """チャットメッセージを処理
-
-        ユーザーからのメッセージを受け取り、OpenAI Assistant APIで処理して応答を生成します。
-        JSONファイルをアップロードしてアシスタントに分析させます。
+    async def _advanced_chat_with_data(self, user_message: str) -> str:
+        """データ分析機能付きの高度なチャット（GPT-4 + ファイル使用）
 
         Args:
-            user_message (str): ユーザーからのメッセージ
+            user_message (str): ユーザーメッセージ
 
         Returns:
-            str: アシスタントからの応答またはエラーメッセージ
+            str: 応答メッセージ
         """
-        # クライアント初期化
-        if not await self._initialize_client():
-            return self.error_messages["API_KEY_INVALID"]
+        print("[PROCESSING] GPT-4 + ファイルアップロードで高度な分析を開始...")
 
         # 最新のJSONファイルを取得
         json_file_path = self._get_latest_site_file()
@@ -235,12 +380,51 @@ class ChatService:
                     # テキストコンテンツを抽出
                     for content in message.content:
                         if content.type == "text":
+                            print("[SUCCESS] GPT-4 での分析処理が完了しました")
                             return content.text.value
 
+            print("[ERROR] GPT-4 からの応答取得に失敗")
             return self.error_messages["GENERAL_ERROR"].format(error="応答の取得に失敗")
 
         except Exception as e:
+            print(f"[ERROR] GPT-4 での処理に失敗: {str(e)}")
             return self.error_messages["GENERAL_ERROR"].format(error=str(e))
+
+    async def process_message(self, user_message: str) -> str:
+        """チャットメッセージを処理
+
+        メッセージの内容を分析して適切な処理方法を選択します：
+        - データ分析が不要: GPT-3.5 Turbo でシンプルチャット
+        - データ分析が必要: GPT-4 + ファイルアップロードで高度な分析
+
+        Args:
+            user_message (str): ユーザーからのメッセージ
+
+        Returns:
+            str: アシスタントからの応答またはエラーメッセージ
+        """
+        # クライアント初期化
+        if not await self._initialize_client():
+            return self.error_messages["API_KEY_INVALID"]
+
+        print(f"[INFO] ユーザーメッセージ: {user_message}")
+
+        # メッセージの内容に応じて処理方法を選択
+        needs_gpt4 = self._needs_gpt4(user_message)
+        needs_data = self._needs_data_analysis(user_message)
+
+        print(
+            f"[INFO] 判定結果 - GPT-4が必要: {needs_gpt4}, データ分析が必要: {needs_data}"
+        )
+
+        if needs_data or needs_gpt4:
+            # データ分析または複雑な処理が必要な場合
+            print("[MODEL] GPT-4 + ファイルアップロードで処理します")
+            return await self._advanced_chat_with_data(user_message)
+        else:
+            # シンプルなチャットで十分な場合
+            print("[MODEL] GPT-3.5 Turbo でシンプルチャットを行います")
+            return await self._simple_chat(user_message)
 
     # === 後方互換性のためのメソッド（未使用） ===
 
