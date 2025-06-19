@@ -37,6 +37,7 @@ class ChatService:
             "GENERAL_ERROR": "エラーが発生しました: {error}",
         }
 
+        # === キーワードの一元管理 ===
         # データ分析が必要なキーワード
         self.data_analysis_keywords = [
             "データ",
@@ -72,6 +73,63 @@ class ChatService:
             "履歴",
             "変化",
             "差異",
+            "どのくらい",
+            "何件",
+            "いくつ",
+            "どんな",
+            "どの",
+            "どれ",
+            "なぜ",
+            "いつ",
+            "誰",
+            "どこ",
+            "?",
+            "？",
+            "教えて",
+            "おしえて",
+            "まとめて",
+            "分かる",
+            "テーブル",
+        ]
+
+        # 複雑な処理を要求するキーワード
+        self.complex_keywords = [
+            "複雑",
+            "詳細",
+            "分析",
+            "解析",
+            "推論",
+            "考察",
+            "検討",
+            "比較",
+            "評価",
+            "判断",
+            "計算",
+            "処理",
+            "変換",
+        ]
+
+        # 質問パターン
+        self.question_patterns = [
+            r"どのくらい",
+            r"何件",
+            r"いくつ",
+            r"どんな",
+            r"どの",
+            r"どれ",
+            r"なぜ",
+            r"いつ",
+            r"誰",
+            r"どこ",
+            r"\?",
+            r"？",
+            r"どうる",
+            r"教えて",
+            r"おしえて",
+            r"まとめて",
+            r"分かる",
+            r"データ",
+            r"テーブル",
         ]
 
     def _get_api_key(self) -> Optional[str]:
@@ -100,6 +158,31 @@ class ChatService:
         latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
         return str(latest_file)
 
+    def _get_system_prompt(self, for_data_analysis: bool = False) -> str:
+        """状況に応じたシステムプロンプトを生成する
+
+        Args:
+            for_data_analysis (bool): データ分析用のプロンプトを生成するかどうか
+
+        Returns:
+            str: 生成されたシステムプロンプト
+        """
+        if for_data_analysis:
+            return """あなたは、日本語で応答するプロのデータ分析アシスタントです。
+アップロードされたJSON（プリザンターのレコード）を分析し、その内容や傾向を説明してください。
+
+**最重要ルール:**
+1. **日本語で回答:** 必ず日本語で応答してください。
+2. **100文字以内:** 回答は常に100文字以内で簡潔にまとめてください。
+3. **積極的な分析:** データから読み取れる傾向や特徴を積極的に見つけ出し、有用な情報を提供してください。
+4. **粒度・回答速度:** 適切な粒度で30秒以内には答えてほしいです
+ユーザーの質問に対し、データに基づいた洞察を分かりやすく伝えてください。"""
+        else:
+            return """あなたはプリザンター（Pleasanter）に関する質問に答えるアシスタントです。
+回答は必ず100文字以内で、必ず日本語で簡潔に答えてください。
+プリザンターの使い方、機能、設定などについて要点のみを分かりやすく回答してください。
+データの詳細分析が必要な場合は、より詳細な分析を依頼するよう案内してください。"""
+
     def _needs_data_analysis(self, message: str) -> bool:
         """メッセージがデータ分析を必要とするかを判定
 
@@ -117,22 +200,7 @@ class ChatService:
                 return True
 
         # 質問パターンをチェック
-        question_patterns = [
-            r"どのくらい",
-            r"何件",
-            r"いくつ",
-            r"どんな",
-            r"どの",
-            r"どれ",
-            r"なぜ",
-            r"いつ",
-            r"誰",
-            r"どこ",
-            r"\?",
-            r"？",
-        ]
-
-        for pattern in question_patterns:
+        for pattern in self.question_patterns:
             if re.search(pattern, message_lower):
                 return True
 
@@ -152,24 +220,8 @@ class ChatService:
             return True
 
         # 複雑な処理を要求するキーワード
-        complex_keywords = [
-            "複雑",
-            "詳細",
-            "分析",
-            "解析",
-            "推論",
-            "考察",
-            "検討",
-            "比較",
-            "評価",
-            "判断",
-            "計算",
-            "処理",
-            "変換",
-        ]
-
         message_lower = message.lower()
-        for keyword in complex_keywords:
+        for keyword in self.complex_keywords:
             if keyword in message_lower:
                 return True
 
@@ -203,16 +255,11 @@ class ChatService:
         """
         print("[PROCESSING] GPT-3.5 Turbo でチャット処理を開始...")
         try:
+            system_prompt = self._get_system_prompt(for_data_analysis=False)
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {
-                        "role": "system",
-                        "content": """あなたはプリザンター（Pleasanter）に関する質問に答えるアシスタントです。
-                        回答は必ず200文字以内で簡潔に答えてください。
-                        プリザンターの使い方、機能、設定などについて要点のみを分かりやすく回答してください。
-                        データの詳細分析が必要な場合は、より詳細な分析を依頼するよう案内してください。""",
-                    },
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
                 max_tokens=300,
@@ -241,25 +288,28 @@ class ChatService:
             for assistant in assistants.data:
                 if assistant.name == "プリザンターデータ分析アシスタント":
                     self.assistant = assistant
-                    return assistant.id
+                    # プロンプトが変更されている可能性があるので更新
+                    system_prompt = self._get_system_prompt(for_data_analysis=True)
+                    if self.assistant.instructions != system_prompt:
+                        self.assistant = self.client.beta.assistants.update(
+                            assistant.id, instructions=system_prompt
+                        )
+                        print("[INFO] 既存アシスタントのプロンプトを更新しました。")
+
+                    print(f"[INFO] 既存のアシスタントを使用: {self.assistant.id}")
+                    return self.assistant.id
 
             # 見つからない場合は新規作成
+            print("[INFO] 専用アシスタントが存在しないため、新規作成します。")
+            system_prompt = self._get_system_prompt(for_data_analysis=True)
             self.assistant = self.client.beta.assistants.create(
                 name="プリザンターデータ分析アシスタント",
-                instructions="""あなたは、日本語で応答するプロのデータ分析アシスタントです。
-                アップロードされたJSON（プリザンターのレコード）を分析し、その内容や傾向を説明してください。
-
-                **最重要ルール:**
-                1. **日本語で回答:** 必ず日本語で応答してください。
-                2. **200文字以内:** 回答は常に200文字以内で簡潔にまとめてください。
-                3. **具体的・直感的:** IDや専門的な項目名ではなく、「タスク名」や「担当者名」といった実際のデータを使って説明してください。（例：「田中さんのタスク」）
-                4. **積極的な分析:** 「分析できません」と答えず、データから読み取れる傾向や特徴を積極的に見つけ出し、有用な情報を提供してください。
-
-                ユーザーの質問に対し、データに基づいた洞察を分かりやすく伝えてください。""",
-                model="gpt-4-1106-preview",
+                instructions=system_prompt,
+                model="gpt-4o",
                 tools=[{"type": "code_interpreter"}],
             )
 
+            print(f"[SUCCESS] 新規アシスタントを作成しました: {self.assistant.id}")
             return self.assistant.id
 
         except Exception as e:
@@ -425,17 +475,3 @@ class ChatService:
             # シンプルなチャットで十分な場合
             print("[MODEL] GPT-3.5 Turbo でシンプルチャットを行います")
             return await self._simple_chat(user_message)
-
-    # === 後方互換性のためのメソッド（未使用） ===
-
-    def get_system_prompt(self) -> str:
-        """システムプロンプトを取得（後方互換性のため残している）"""
-        return ""
-
-    def format_user_message(self, original: str) -> str:
-        """ユーザーメッセージを加工（後方互換性のため残している）"""
-        return original
-
-    def build_chat_messages(self, user_input: str) -> List[Dict[str, str]]:
-        """OpenAI API用のメッセージ配列を構築（後方互換性のため残している）"""
-        return []

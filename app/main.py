@@ -257,5 +257,94 @@ async def receive_site_id(
         )
 
 
+@app.post("/api/test-processing-message")
+async def test_processing_message(
+    chat_service: ChatService = Depends(get_chat_service),
+) -> JSONResponse:
+    """処理中メッセージのテスト送信エンドポイント
+
+    Returns:
+        JSONResponse: テスト結果
+    """
+    print("[INFO] 処理中メッセージのテスト送信開始")
+
+    # テスト用のテーブル関連メッセージ
+    test_message = "テーブルの件数を教えて"
+
+    # ChatServiceの処理中メッセージ送信をテスト
+    result = await chat_service._send_processing_message(test_message)
+
+    if result:
+        return JSONResponse(
+            content={
+                "status": "success",
+                "message": f"処理中メッセージをサイトID {result} に送信しました",
+                "test_message": test_message,
+            }
+        )
+    else:
+        return JSONResponse(
+            content={
+                "status": "error",
+                "message": "処理中メッセージの送信に失敗しました",
+                "test_message": test_message,
+            },
+            status_code=500,
+        )
+
+
+@app.post("/api/send-message/{site_id}")
+async def send_message_to_pleasanter(
+    site_id: int,
+    request: Request,
+    pleasanter_client: PleasanterClient = Depends(get_pleasanter_client),
+) -> JSONResponse:
+    """プリザンターにメッセージを送信するエンドポイント
+
+    指定されたサイトIDにメッセージを送信します。
+    処理中メッセージや任意のメッセージを送信できます。
+
+    Args:
+        site_id (int): プリザンターのサイトID
+        request (Request): HTTPリクエスト（messageパラメータを含む）
+
+    Returns:
+        JSONResponse: 送信結果を含むレスポンス
+
+    Example:
+        Request: {"message": "処理中です。しばらくお待ちください。"}
+        Response: {"status": "success", "site_id": 123, "message": "メッセージを送信しました"}
+    """
+    data = await request.json()
+    message = data.get("message", "")
+
+    if not message:
+        return create_pleasanter_response(
+            success=False,
+            site_id=site_id,
+            message="送信するメッセージが指定されていません",
+            error="message parameter is required",
+        )
+
+    print(f"[INFO] SiteId {site_id} にメッセージを送信: {message}")
+
+    # プリザンターにメッセージを送信
+    result = await pleasanter_client.send_message(site_id, message)
+
+    if result["success"]:
+        print(f"[INFO] {result['message']}")
+        return create_pleasanter_response(
+            success=True, site_id=site_id, message=result["message"]
+        )
+    else:
+        print(f"[ERROR] {result['message']}: {result['error']}")
+        return create_pleasanter_response(
+            success=False,
+            site_id=site_id,
+            message=result["message"],
+            error=result["error"],
+        )
+
+
 # === 開発用コマンド ===
 # uvicorn app.main:app --reload

@@ -25,7 +25,7 @@ class PleasanterClient:
         """
         self.base_url = settings.PLEASANTER_BASE_URL
         self.api_key = settings.PLEASANTER_API_KEY
-        self.timeout = 30.0  # リクエストタイムアウト（秒）
+        self.timeout = 60.0  # リクエストタイムアウト（秒）
 
     def _build_request_data(self) -> Dict[str, Any]:
         """プリザンターAPI用のリクエストデータを構築
