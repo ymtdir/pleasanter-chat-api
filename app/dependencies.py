@@ -14,6 +14,9 @@ def get_chat_service() -> ChatService:
     Returns:
         ChatService: 設定済みのチャットサービス
     """
+    # JSONファイルベースのアプローチに変更されたため、
+    # グローバル変数からのデータ取得は不要になりました
+    # ChatServiceは自動的に最新のJSONファイルを検索します
     return ChatService()
 
 
